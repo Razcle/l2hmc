@@ -133,14 +133,14 @@ class GMM(object):
       return -tf.reduce_logsumexp(V, axis=1)
     return fn
 
-  def get_samples(self, n):
+  def get_samples(self, n, T=1.0):
     categorical = np.random.choice(self.nb_mixtures, size=(n,), p=self.pis)
     counter_samples = collections.Counter(categorical)
 
     samples = []
 
-    for k, v in counter_samples.iteritems():
-      samples.append(np.random.multivariate_normal(self.mus[k], self.sigmas[k], size=(v,)))
+    for k, v in counter_samples.items():
+      samples.append(np.random.multivariate_normal(self.mus[k], self.sigmas[k] * T, size=(v,)))
 
     samples = np.concatenate(samples, axis=0)
 
@@ -211,3 +211,58 @@ def gen_ring(r=1.0, var=1.0, nb_mixtures=2):
   pis = [1. / nb_mixtures] * nb_mixtures
   pis[0] += 1-sum(pis)
   return GMM(base_points, sigmas, pis)
+
+def get_donut_energy():
+    "returns a callable for log_prob of the target distribution"
+
+    def donut_density(x):
+        x = tf.reshape(x, [tf.shape(x)[0], 1, tf.shape(x)[1]])
+        thetas = tf.lin_space(0., 2*np.pi, 500)
+        sins = tf.sin(thetas)
+        coses = tf.cos(thetas)
+        means = tf.transpose(tf.stack([sins, coses]))
+        means = tf.expand_dims(means, 0)
+        exponent = -(1./0.05)*tf.reduce_sum((x-means)**2, axis=2)
+        return tf.reduce_sum(exponent, axis=1)
+
+    return lambda x: donut_density(x)
+
+class LogisticRegressionTF:
+
+    def __init__(self, X, y, data_dim, prior_variance):
+        """
+            we expect y to be binary {0, 1}
+        """
+        self.X = tf.constant(X)
+        self.y = tf.constant(y)
+        self.scale = prior_variance
+        self.data_dim = data_dim
+        self.theta, self.preds = self._build_predict()
+
+    def get_energy_func(self):
+        """ returns function to calculate negative log_prob"""
+        z = 2 * self.y - 1
+        X = tf.expand_dims(self.X, 0)
+
+        def energy_func(theta):
+            theta_ = tf.reshape(theta, [-1, 1, self.data_dim])
+            act = tf.reduce_sum(X*theta_, 2)  # Num_chains x Num_data
+            log_probs = tf.reduce_sum(tf.log(tf.sigmoid(act*tf.transpose(z)) + 1e-10), axis=1, keepdims=True)  # Num_chains x 1
+            log_prior = self._log_prior(theta)  # Num_chains x 1
+            return - tf.squeeze(log_probs + log_prior)  # The sampler expects a shape of (N,) so we squeeze
+
+        return energy_func
+
+    def _log_prior(self, theta):
+        mahalob = - 0.5 * tf.reduce_sum(theta**2, axis=1, keepdims=True)  # Num_chains x1
+        return mahalob/self.scale
+
+    def predict(self, theta, x, sess):
+        return sess.run(self.preds, feed_dict={self.X:x, self.theta:theta})
+
+    def _build_predict(self):
+        theta = tf.placeholder(dtype=tf.float32, shape=[None, self.data_dim], name='theta')
+        X = tf.expand_dims(self.X, 0)
+        theta_ = tf.reshape(theta, [-1, 1, self.data_dim])
+        preds = tf.sigmoid(tf.reduce_sum(theta_*X, axis=2))  # Num_chains x Num_data
+        return theta, preds

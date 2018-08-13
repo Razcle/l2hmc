@@ -1,8 +1,10 @@
 import tensorflow as tf
 import numpy as np
-from dynamics import Dynamics
-from sampler import propose
+from .dynamics import Dynamics
+from .sampler import propose
 import matplotlib.pyplot as plt
+import errno
+import os
 
 def plot_grid(S, width=8):
     sheet_width = width
@@ -37,3 +39,11 @@ def get_hmc_samples(x_dim, eps, energy_function, sess, T=10, steps=200, samples=
         Lx_, px_, samples = sess.run([Lx, px, hmc_MH[0]], {hmc_x: samples})
         
     return np.array(final_samples)
+
+
+def ensure_directory(path):
+    try:
+        os.makedirs(path)
+    except OSError as exception:
+        if exception.errno != errno.EEXIST:
+            raise
