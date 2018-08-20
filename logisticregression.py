@@ -8,8 +8,24 @@ from utils.distributions import Gaussian, GMM, GaussianFunnel, gen_ring, Logisti
 from utils.layers import Linear, Sequential, Zip, Parallel, ScaleTanh
 from utils.dynamics import Dynamics
 from utils.sampler import propose
-from utils.notebook_utils import get_hmc_samples
+from utils.notebook_utils import ensure_directory
 
+#%% set constants
+
+data_folder = 'data/heart'
+checkpoint_dir = 'checkpoints/logistic_regression/'
+result_dir = 'results/logistic_regression/'
+log_dir = 'logs/logistic_regression/'
+ensure_directory(log_dir)
+ensure_directory(result_dir)
+ensure_directory(checkpoint_dir)
+sample_steps = 10000
+n_steps = 100
+n_samples = 200
+scale = 1.0
+temp = 1.0
+
+#%% build network
 
 def network(x_dim, scope, factor):
     with tf.variable_scope(scope):
@@ -39,17 +55,21 @@ def network(x_dim, scope, factor):
 
     return net
 
-FOLDER = '/Users/Raza/VariationalSampling/data/german'
+#%% set up distributions and graph
+
 
 def load_data(folder):
     X = np.load(folder + '/data.npy')
     y = np.load(folder + '/labels.npy')
     return X, y
 
-X, y = load_data(FOLDER)
-x_dim = X.shape[1]
-logisticregression = LogisticRegressionTF(X.astype(np.float32), y.astype(np.float32), data_dim=x_dim, prior_variance=0.1)
-
+data, y = load_data(data_folder)
+# Normalize the f**king data!!!
+dm = np.mean(data, axis=0)
+ds = np.std(data, axis=0)
+data = (data - dm) / ds
+x_dim = data.shape[1]
+logisticregression = LogisticRegressionTF(data.astype(np.float32), y.astype(np.float32), data_dim=x_dim, prior_variance=0.1)
 
 dynamics = Dynamics(x_dim, logisticregression.get_energy_func(), T=10, eps=0.1, net_factory=network, use_temperature=False)
 
@@ -63,7 +83,7 @@ loss = 0.0
 
 v1 = (tf.reduce_sum(tf.square(x - Lx), axis=1) * px) + 1e-4
 v2 = (tf.reduce_sum(tf.square(z - Lz), axis=1) * pz) + 1e-4
-scale = 1.0
+
 
 loss += scale * (tf.reduce_mean(1.0 / v1) + tf.reduce_mean(1.0 / v2))
 loss += (- tf.reduce_mean(v1) - tf.reduce_mean(v2)) / scale
@@ -74,22 +94,20 @@ optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
 train_op = optimizer.minimize(loss, global_step=global_step)
 
 import time
+train_time = 0.0
 
-time1 = time.time()
-n_steps = 100
-n_samples = 200
 losses = []
-
 samples = np.random.randn(n_samples, x_dim)
 
+saver = tf.train.Saver()
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 train_writer = tf.summary.FileWriter('logs/logistic_regression/', sess.graph)
 train_writer.close()
-temp = 0.5
+
 
 for t in range(n_steps):
-    print(t)
+    time1 = time.time()
     _, loss_, samples, px_, lr_ = sess.run([
         train_op,
         loss,
@@ -97,30 +115,36 @@ for t in range(n_steps):
         px,
         learning_rate,
     ], {x: samples, dynamics.temperature: temp})
+    time2 = time.time()
+    train_time += time2 - time1
     losses.append(loss_)
-    temp = 0.5 + (t+1)/(2*n_steps)
 
     if t % 100 == 0:
         print(
             'Step: %d / %d, Loss: %.2e, Acceptance sample: %.2f, LR: %.5f' % (
             t, n_steps, loss_, np.mean(px_), lr_))
-time2 = time.time()
-print('Time to train sampler was {} seconds'.format(time2 - time1))
 
-samples = distribution.get_samples(n=n_samples)
+    if (t + 1) % 500 == 0:
+        saver.save(sess, checkpoint_dir, global_step)
+
+print('Time to train sampler was {} seconds'.format(train_time))
+
+samples = np.random.randn(n_samples, x_dim)
 final_samples = []
 
-for t in range(2000):
+sample_time = 0.0
+for t in range(sample_steps):
     final_samples.append(np.copy(samples))
 
+    time1 = time.time()
     feed_dict = {
         x: samples, dynamics.temperature: 1.0,
     }
-
+    time2 = time.time()
+    sample_time += time2 - time1
     samples = sess.run(output[0], feed_dict)
+sample_time = sample_time/(sample_steps * n_samples)
 
-np.save('mogsamples_with_temp', np.array(final_samples))
+np.savez(result_dir + 'logistic_regression', np.array(final_samples), train_time, sample_time)
 
-L2HMC_samples = np.array(final_samples)
-plt.plot(L2HMC_samples[:, 5, 0], L2HMC_samples[:, 5, 1], color='orange', marker='o', alpha=0.8)
-plt.show()
+

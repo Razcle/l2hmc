@@ -14,7 +14,7 @@
 
 """
 Distribution object providing TF Energy function, sampling (when possible)
-and numpy log-density
+and numpy log-density. The energy function is the negative log_prob
 """
 
 from __future__ import absolute_import
@@ -223,9 +223,9 @@ def get_donut_energy():
         means = tf.transpose(tf.stack([sins, coses]))
         means = tf.expand_dims(means, 0)
         exponent = -(1./0.05)*tf.reduce_sum((x-means)**2, axis=2)
-        return tf.reduce_sum(exponent, axis=1)
+        return tf.reduce_logsumexp(exponent, axis=1)
 
-    return lambda x: donut_density(x)
+    return lambda x: - donut_density(x)
 
 class LogisticRegressionTF:
 
@@ -247,14 +247,14 @@ class LogisticRegressionTF:
         def energy_func(theta):
             theta_ = tf.reshape(theta, [-1, 1, self.data_dim])
             act = tf.reduce_sum(X*theta_, 2)  # Num_chains x Num_data
-            log_probs = tf.reduce_sum(tf.log(tf.sigmoid(act*tf.transpose(z)) + 1e-10), axis=1, keepdims=True)  # Num_chains x 1
+            log_probs = tf.reduce_sum(tf.log(tf.sigmoid(act*tf.transpose(z)) + 1e-10), axis=1, keep_dims=True)  # Num_chains x 1
             log_prior = self._log_prior(theta)  # Num_chains x 1
             return - tf.squeeze(log_probs + log_prior)  # The sampler expects a shape of (N,) so we squeeze
 
         return energy_func
 
     def _log_prior(self, theta):
-        mahalob = - 0.5 * tf.reduce_sum(theta**2, axis=1, keepdims=True)  # Num_chains x1
+        mahalob = - 0.5 * tf.reduce_sum(theta**2, axis=1, keep_dims=True)  # Num_chains x1
         return mahalob/self.scale
 
     def predict(self, theta, x, sess):

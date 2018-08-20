@@ -17,12 +17,13 @@ sess = tf.Session()
 
 #%% set up distribution and constants
 
-log_dir = 'logs/mog'
+log_dir = 'logs/mog/'
 checkpoint_dir = 'checkpoints/mog/'
+results_dir = 'results/mog/'
 x_dim = 2
-n_steps = 10000
+n_steps = 8300
 n_samples = 200
-temp = 40
+temp = 30
 annealing_steps = 100
 losses = []
 means = [np.array([10., 0.0]).astype(np.float32), np.array([-10.0, 0.0]).astype(np.float32)]
@@ -30,8 +31,8 @@ covs = [np.array([[1.0, 0.0],[0.0, 1.0]]), np.array([[1.0, 0.0],[0.0, 1.0]])]
 distribution = GMM(means, covs, [0.5, 0.5])
 # Get some samples from the true distribution for debugging
 init_samples = distribution.get_samples(200)
-plt.scatter(init_samples[:, 0], init_samples[:, 1])
-plt.show()
+# plt.scatter(init_samples[:, 0], init_samples[:, 1])
+# plt.show()
 np.save('init_samples', init_samples)
 
 
@@ -74,13 +75,6 @@ z = tf.random_normal(tf.shape(x))
 
 Lx, _, px, output = propose(x, dynamics, do_mh_step=True)
 Lz, _, pz, _ = propose(z, dynamics, do_mh_step=False)
-chain = tf.stack(output)
-ess = batch_means_essTF(chain)
-tf.summary.histogram('ess_y', ess[:, 0])
-tf.summary.histogram('ess_x', ess[:, 1])
-tf.summary.scalar('ess_min', tf.reduce_min(ess))
-tf.summary.histogram('intermediate_sample_y', output[0][:, 1])
-tf.summary.histogram('intermediate_sample_x', output[0][:, 0])
 
 loss = 0.
 
@@ -125,7 +119,6 @@ for t in range(n_steps):
     training_time += time2 - time1
     losses.append(loss_)
     intermediate_samples.append(samples)
-
     if t % annealing_steps == 0:
         print(
             'Time: %d, Step: %d / %d, Loss: %.2e, Acceptance sample: %.2f, LR: %.5f, Temp: %.5f' % (
@@ -135,8 +128,18 @@ for t in range(n_steps):
         # temp_samples = distribution.get_samples(200, T=temp)
         # plt.scatter(temp_samples[:, 0], temp_samples[:, 1])
         # plt.show()
+        # Plot intermediate samples for debugging
+
+        print('plotting')
+        ind = np.random.randint(n_samples)
+        int_samps = np.array(intermediate_samples)
+        plt.scatter(int_samps[:, ind, 0], int_samps[:, ind, 1])
+        plt.savefig(log_dir + 'samples_{}'.format(t))
+        plt.close()
+
         if temp > 1.0:
             temp *= 0.96
+
 
     if (t + 1) % 2000:
         saver.save(sess, checkpoint_dir + 'mog_sampler', global_step)
@@ -150,18 +153,17 @@ print('Time to train sampler was {} seconds'.format(training_time))
 final_samples = []
 samples = np.random.normal(size=(n_samples, 2))
 
+time1 = time.time()
 for t in range(20000):
     feed_dict = {
         x: samples, dynamics.temperature: 1.0,
     }
-
     samples = sess.run(output[0], feed_dict)
     final_samples.append(np.copy(samples))
+time2 = time.time()
+sample_time = (time2 - time1)/(10000 * n_samples)
 
-ensure_directory('results')
-np.save('mogsamples_', np.array(final_samples))
+ensure_directory(results_dir)
+np.savez(results_dir + 'mogsamples_final', np.array(final_samples), training_time, sample_time)
 
-L2HMC_samples = np.array(final_samples)
-plt.plot(L2HMC_samples[:, 5, 0], L2HMC_samples[:, 5, 1], color='orange', marker='o', alpha=0.8)
-plt.show()
 

@@ -1,16 +1,31 @@
+import time
+
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 
 from utils.func_utils import accept, jacobian, autocovariance, get_log_likelihood, \
     get_data, binarize, normal_kl, acl_spectrum, ESS
-from utils.distributions import Gaussian, GMM, GaussianFunnel, gen_ring
+from utils.distributions import get_donut_energy
 from utils.layers import Linear, Sequential, Zip, Parallel, ScaleTanh
 from utils.dynamics import Dynamics
 from utils.sampler import propose
-from utils.notebook_utils import get_hmc_samples
+from utils.notebook_utils import ensure_directory
 
+sess = tf.Session()
 
+#%% Set constants
+log_dir = 'logs/ring/'
+results_dir = 'results/ring/'
+checkpoint_dir = 'checkpoints/ring/'
+ensure_directory(log_dir)
+ensure_directory(results_dir)
+ensure_directory(checkpoint_dir)
+x_dim = 2
+n_steps = 5000
+n_samples = 200
+
+#%% Setup network
 def network(x_dim, scope, factor):
     with tf.variable_scope(scope):
         net = Sequential([
@@ -39,13 +54,9 @@ def network(x_dim, scope, factor):
 
     return net
 
-x_dim = 2
-# means = [np.array([4., 0.0]).astype(np.float32), np.array([-4.0, 0.0]).astype(np.float32)]
-# covs = [np.array([[0.1, 0.0],[0.0, 0.1]]), np.array([[1.0, 0.0],[0.0, 1.0]])]
-distribution = gen_ring(nb_mixtures=10, var=0.1)
+#%% Set the distributions
 
-
-dynamics = Dynamics(x_dim, distribution.get_energy_function(), T=10, eps=0.1, net_factory=network, use_temperature=False)
+dynamics = Dynamics(x_dim, get_donut_energy(), T=10, eps=0.1, net_factory=network, use_temperature=False)
 
 x = tf.placeholder(tf.float32, shape=(None, x_dim))
 z = tf.random_normal(tf.shape(x))
@@ -67,19 +78,16 @@ learning_rate = tf.train.exponential_decay(1e-3, global_step, 1000, 0.96, stairc
 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
 train_op = optimizer.minimize(loss, global_step=global_step)
 
-import time
-
-time1 = time.time()
-n_steps = 100
-n_samples = 200
 losses = []
 
 samples = np.random.randn(n_samples, x_dim)
-
-sess = tf.Session()
+saver = tf.train.Saver()
 sess.run(tf.global_variables_initializer())
 
+#%% Train sampler
+train_time = 0.0
 for t in range(n_steps):
+    time1 = time.time()
     _, loss_, samples, px_, lr_ = sess.run([
         train_op,
         loss,
@@ -87,28 +95,35 @@ for t in range(n_steps):
         px,
         learning_rate,
     ], {x: samples})
+    time2 = time.time()
+    train_time += time2 - time1
     losses.append(loss_)
 
     if t % 100 == 0:
         print(
             'Step: %d / %d, Loss: %.2e, Acceptance sample: %.2f, LR: %.5f' % (
             t, n_steps, loss_, np.mean(px_), lr_))
-time2 = time.time()
-print('Time to train sampler was {} seconds'.format(time2 - time1))
 
+    if t % 500 == 0:
+        saver.save(sess, checkpoint_dir, global_step)
+
+print('Time to train sampler was {} seconds'.format(train_time))
+
+
+#%% Draw some samples
 final_samples = []
 
-for t in range(2000):
+sample_time = 0.0
+for t in range(1000):
+
     final_samples.append(np.copy(samples))
 
     feed_dict = {
         x: samples,
     }
-
+    time1 = time.time()
     samples = sess.run(output[0], feed_dict)
+    time2 = time.time()
+    sample_time += time2 - time1
 
-np.save('ringsamples', np.array(final_samples))
-
-L2HMC_samples = np.array(final_samples)
-plt.plot(L2HMC_samples[:, 5, 0], L2HMC_samples[:, 5, 1], color='orange', marker='o', alpha=0.8)
-plt.show()
+np.savez(results_dir + 'samples', np.array(final_samples), train_time, sample_time)
