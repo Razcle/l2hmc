@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+init_temp=(300 100 80 50 30)
+learning_rate=(1e-1 1e-2 1e-3 5e-4 1e-4)
+n_steps=20000
+anneal_steps=(50 100 200 250)
+
+for temp in ${init_temp[@]}
+do
+    for rate in ${learning_rate[@]}
+    do
+        for step in ${anneal_steps[@]}
+        do
+cat > submit_$1.sh << END
+#$ -l tmem=4G
+
+## H_VMEM needs to be omitted from tensorflow and pytorch jobs
+## -l h_vmem=16G
+
+#$ -l h_rt=24:00:00
+#$ -l gpu=1
+
+#$ -S /bin/bash
+#$ -N $1_${rate}_${temp}_${step}
+#$ -P gpu
+#$ -j y
+#$ -cwd
+
+source /share/apps/examples/python/python-3.6.3.source
+
+# LD_LIBRARY_PATH variable defines a set of shared libraries to be used when running applications (much like the PATH variable).
+LD_LIBRARY_PATH="/share/apps/libc6_2.23/lib/x86_64-linux-gnu:/share/apps/libc6_2.23/lib64:/share/apps/gcc-6.2.0/lib64:/share/apps/gcc-6.2.0/lib:/share/apps/python-3.6.3-shared/lib:/share/apps/cuda-8.0/lib64:${LD_LIBRARY_PATH}"
+/share/apps/libc6_2.23/lib/x86_64-linux-gnu/ld-2.23.so $(command -v /share/apps/python-3.6.3-shared/bin/python3) -u $1 --anneal_steps $step --init_temp $temp --learning_rate $rate --n_steps 20000 >> rate$rate_temp$temp_anneal$step_$2
+END
+
+echo "submiting job $1, outputing to rate${rate}_temp${temp}_anneal${step}_$2"
+cat $"submit_$1.sh"
+echo "qsub submit_$1.sh"  # remove the echo here to actually submit
+
+rm submit_$1.sh
+        done
+    done
+done

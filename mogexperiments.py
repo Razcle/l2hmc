@@ -1,5 +1,9 @@
+import argparse
+
 import tensorflow as tf
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 
@@ -12,28 +16,38 @@ from utils.sampler import propose
 from utils.notebook_utils import  ensure_directory
 from utils.evaluation import  batch_means_essTF
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--log_dir", "-ld", type=str, default='logs/mog/')
+parser.add_argument("--checkpoint_dir", "-cd", type=str, default='checkpoints/mog/')
+parser.add_argument("--results_dir", "-rd", type=str, default='results/mog/')
+parser.add_argument("--n_steps", "-ns", type=int, default='20000')
+parser.add_argument("--init_temp", "-it", type=float, default='30')
+parser.add_argument("--n_samples", "-nsmp", type=int, default='200')
+parser.add_argument("--anneal_steps", "-as", type=int, default='220')
+parser.add_argument("--learning_rate", "-lr", type=float, default='5e-4')
+args = parser.parse_args()
+print(args)
 
 sess = tf.Session()
 
 #%% set up distribution and constants
 
-log_dir = 'logs/mog/'
-checkpoint_dir = 'checkpoints/mog/'
-results_dir = 'results/mog/'
+log_dir = args.log_dir
+checkpoint_dir = args.checkpoint_dir
+results_dir = args.results_dir
 x_dim = 2
-n_steps = 8300
-n_samples = 200
-temp = 30
-annealing_steps = 100
+n_steps = args.n_steps
+n_samples = args.n_samples
+temp = args.init_temp
+annealing_steps = args.anneal_steps
+learning_rate = args.learning_rate
 losses = []
 means = [np.array([10., 0.0]).astype(np.float32), np.array([-10.0, 0.0]).astype(np.float32)]
 covs = [np.array([[1.0, 0.0],[0.0, 1.0]]), np.array([[1.0, 0.0],[0.0, 1.0]])]
 distribution = GMM(means, covs, [0.5, 0.5])
 # Get some samples from the true distribution for debugging
 init_samples = distribution.get_samples(200)
-# plt.scatter(init_samples[:, 0], init_samples[:, 1])
-# plt.show()
-np.save('init_samples', init_samples)
+
 
 
 #%%
@@ -94,6 +108,7 @@ train_op = optimizer.minimize(loss, global_step=global_step)
 #%%
 ensure_directory(log_dir)
 ensure_directory(checkpoint_dir)
+ensure_directory(results_dir)
 summary = tf.summary.merge_all()
 summary_writer = tf.summary.FileWriter(log_dir, sess.graph)
 saver = tf.train.Saver()
@@ -138,16 +153,17 @@ for t in range(n_steps):
         plt.close()
 
         if temp > 1.0:
-            temp *= 0.96
+            temp *= 0.95
 
 
     if (t + 1) % 2000:
         saver.save(sess, checkpoint_dir + 'mog_sampler', global_step)
 
-np.save('intermediate_samples_', np.array(intermediate_samples))
+np.save('intermediate_samples_'.format(t), np.array(intermediate_samples))
 
 
 print('Time to train sampler was {} seconds'.format(training_time))
+saver.save(sess, checkpoint_dir + 'final_mog_sampler')
 
 #%%
 final_samples = []
